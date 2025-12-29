@@ -3,10 +3,10 @@ Description: 工具注册的基础模块。通过 @tool_register 装饰器将函
 Author: zyq
 Date: 2025-12-26 11:08:17
 LastEditors: zyq
-LastEditTime: 2025-12-26 15:39:46
+LastEditTime: 2025-12-30 14:42:37
 '''
 
-from typing import Any, Callable, Dict, List, Optional, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, Set, get_type_hints
 import inspect
 import re
 
@@ -36,6 +36,7 @@ class ToolExecutor:
     工具注册与调用的基础类。Agent 可以通过它获取工具清单或直接触发调用。
     """
     _registry: Dict[str, RegisteredTool] = {}
+    _allowed_tools: Optional[Set[str]] = None
     
     @classmethod
     def register(cls, tool:RegisteredTool, override: bool = False) -> None:
@@ -45,6 +46,7 @@ class ToolExecutor:
 
     @classmethod
     def get(cls, name: str) -> RegisteredTool:
+        cls._ensure_allowed(name)
         try:
             return cls._registry[name]
         except KeyError as exc:
@@ -52,7 +54,9 @@ class ToolExecutor:
 
     @classmethod
     def list(cls) -> List[RegisteredTool]:
-        return list(cls._registry.values())
+        if cls._allowed_tools is None:
+            return list(cls._registry.values())
+        return [tool for name, tool in cls._registry.items() if name in cls._allowed_tools]
 
     @classmethod
     def get_tool_desc(cls) -> List[Dict[str, Any]]:
@@ -69,15 +73,30 @@ class ToolExecutor:
         return specs
     
     @classmethod
-    def get_tool_info(cls, name: str) -> Dict[str, Any]:
+    def get_tool_info_by_name(cls, name: str) -> Dict[str, Any]:
         """获取指定工具元数据"""
+        cls._ensure_allowed(name)
         return cls._registry[name].model_dump()
 
     @classmethod
     def run(cls, name: str, *args, **kwargs):
         """调用指定名称的工具"""
+        cls._ensure_allowed(name)
         tool = cls._registry.get(name)
+        if tool is None:
+            raise ToolException(f"未找到名称为 {name} 的工具")
         return tool.func(*args, **kwargs)
+
+    @classmethod
+    def set_allowed_tools(cls, tool_names: Optional[List[str]] = None) -> None:
+        """设置允许使用的工具名单，传入 None 表示全量开放"""
+        cls._allowed_tools = set(tool_names) if tool_names else None
+
+    @classmethod
+    def _ensure_allowed(cls, name: str) -> None:
+        """校验工具是否允许被使用"""
+        if cls._allowed_tools is not None and name not in cls._allowed_tools:
+            raise ToolException(f"工具 {name} 未被允许使用")
 
 
 def _type_to_str(annotation: Any) -> str:

@@ -3,7 +3,7 @@ Description:
 Author: zyq
 Date: 2025-12-25 16:23:58
 LastEditors: zyq
-LastEditTime: 2025-12-26 17:18:53
+LastEditTime: 2025-12-30 16:15:02
 '''
 import os
 from typing import Literal, Optional, Iterator, List
@@ -184,7 +184,6 @@ class BaseLLMClient:
         elif self.provider == "qwen":
             resolved_api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
             resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            print(resolved_api_key)
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "modelscope":

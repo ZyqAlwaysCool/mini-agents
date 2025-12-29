@@ -6,8 +6,9 @@ LastEditors: zyq
 LastEditTime: 2025-12-29 10:45:14
 '''
 import os
-from typing import Optional, Dict, Any, Literal
-from pydantic import BaseModel
+import json
+from typing import Optional, Dict, Any, Literal, List
+from pydantic import BaseModel, field_validator
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,6 +31,68 @@ class GeneralConfig(BaseModel):
     
     def to_dict(self):
         return self.model_dump()
+
+
+class MCPServerConfig(BaseModel):
+    """MCP 服务端配置"""
+    name: str
+    base_url: str
+    api_key: Optional[str] = None
+    api_key_header: str = "X-API-Key"
+    tools_path: str = "/tools"
+    invoke_path: str = "/tools/{tool_name}"
+    timeout: int = 10
+    enabled: bool = True
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def _strip_slash(cls, v: str) -> str:
+        return v.rstrip("/") if isinstance(v, str) else v
+
+
+class MCPConfig(BaseModel):
+    """MCP 服务端列表配置"""
+    servers: List[MCPServerConfig] = []
+
+    @classmethod
+    def from_env(cls) -> "MCPConfig":
+        servers: List[MCPServerConfig] = []
+
+        idx = 1
+        while True:
+            base_url = os.environ.get(f"MCP_{idx}_BASE_URL", "").strip()
+            if not base_url:
+                break
+            servers.append(
+                MCPServerConfig(
+                    name=os.environ.get(f"MCP_{idx}_NAME", f"mcp_{idx}"),
+                    base_url=base_url,
+                    api_key=os.environ.get(f"MCP_{idx}_API_KEY"),
+                    api_key_header=os.environ.get(f"MCP_{idx}_API_KEY_HEADER", "X-API-Key"),
+                    tools_path=os.environ.get(f"MCP_{idx}_TOOLS_PATH", "/tools"),
+                    invoke_path=os.environ.get(f"MCP_{idx}_INVOKE_PATH", "/tools/{tool_name}"),
+                    timeout=int(os.environ.get(f"MCP_{idx}_TIMEOUT", 10)),
+                    enabled=os.environ.get(f"MCP_{idx}_ENABLED", "true").lower() == "true",
+                )
+            )
+            idx += 1
+
+        if not servers:
+            base_url = os.environ.get("MCP_BASE_URL", "").strip()
+            if base_url:
+                servers.append(
+                    MCPServerConfig(
+                        name=os.environ.get("MCP_NAME", "mcp_default"),
+                        base_url=base_url,
+                        api_key=os.environ.get("MCP_API_KEY"),
+                        api_key_header=os.environ.get("MCP_API_KEY_HEADER", "X-API-Key"),
+                        tools_path=os.environ.get("MCP_TOOLS_PATH", "/tools"),
+                        invoke_path=os.environ.get("MCP_INVOKE_PATH", "/tools/{tool_name}"),
+                        timeout=int(os.environ.get("MCP_TIMEOUT", 10)),
+                        enabled=os.environ.get("MCP_ENABLED", "true").lower() == "true",
+                    )
+                )
+        return cls(servers=servers)
 
 class LLMConfig(BaseModel):
     default_provider: LLMProviders = "openai"
