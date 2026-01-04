@@ -13,6 +13,7 @@ mini_agents:
 * tools: 定义工具管理基类, 包括本地工具调用和远端mcp工具调用实现, 交由统一的ToolExecutor管理工具注册、调用
 * test：包含多个不同的调用示例
 * agents: 包含多个具体的agent实现，主要通过pocketflow来做同步/异步版本的实现。pocketflow可视为一个工作流编排器，源码仅有100行，可作为workflow/agent设计的最小载体。在它的基础上做能力扩展。pocketflow见：https://github.com/The-Pocket/PocketFlow
+* memory: 包含短期/长期记忆功能的实现, 可配置在agent中, 目前已在react agent中适配记忆能力
 
 
 ## 依赖安装
