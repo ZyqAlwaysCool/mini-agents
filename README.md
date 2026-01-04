@@ -107,6 +107,22 @@ python test/test_react_agent.py
 ```
 （需事先配置好 LLM/MCP 网络与鉴权）
 
+## 记忆功能(Memory)
+- 组件：
+    - SessionMemory: 短期记忆，驻内存，支持 TTL/容量淘汰
+    - HybridLongTermMemory: 长期记忆，默认 sqlite+向量存储, 向量化需要部署xinference等服务调用, 非本地embedding模型
+    - MemoryManager: 检索聚合+RRF 排序+遗忘衰减
+    - MemoryRefiner: 通过LLM将单次对话中的短期记忆做提炼, 把有价值的信息结构化成长期记忆存储在sqlite或其他存储后端中
+- 嵌入(embedder)：支持远程嵌入，需配置 `MEMORY_REMOTE_EMBEDDING_MODEL / BASE_URL / API_KEY / DIM`，缺失配置会报错。
+- 去重：长期记忆(LongTermMemory)写入前按 `(user_id, type, content)` 去重，避免重复记忆膨胀。
+- 遗忘(forget)：`forget_on_run_end` 控制 run 结束是否触发记忆的衰减清理, 模拟人会遗忘一些不重要的记忆, `refiner_timeout` 控制记忆精炼线程的等待时长，超时会告警但线程继续执行。
+
+### 执行流程(以ReAct agent+Memory为示例)
+0) 测试文件: `test/test_memory_react_llm.py`
+1) 请求前：根据用户输入构造 `MemoryQuery` 检索记忆，生成 `[MEMORY_START...END]` 片段注入 ReAct 提示。
+2) 运行中：用户消息/工具 observation/模型思考依次写入短期记忆，用于当前轮决策与后续检索；历史保存在 `history` 便于调试。
+3) 结束时：写入本轮最终回答到短期记忆中；若开启精炼，启动精炼线程，将本轮关键信息摘要打标写入长期记忆存储（默认 sqlite）。
+
 ## 常见问题
 - 事件循环：同步环境用 `register`/`run`，异步环境用 `register_async`/`run_async`，避免在已有事件循环中调用同步接口。
 - 网络失败：若日志提示 MCP 预检或 LLM 连接失败，请检查内网可达性、DNS、代理、防火墙设置。未连通时 MCP 会被跳过，可能导致白名单过滤后无可用工具。

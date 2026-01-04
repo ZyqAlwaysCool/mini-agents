@@ -3,7 +3,7 @@ Description: 配置中心
 Author: zyq
 Date: 2025-12-25 16:24:10
 LastEditors: zyq
-LastEditTime: 2025-12-29 10:45:14
+LastEditTime: 2026-01-04 17:20:38
 '''
 import os
 import json
@@ -128,6 +128,64 @@ class AgentConfig(BaseModel):
             max_round=int(os.environ.get("AGENT_MAX_ROUND", 10)),
             per_tool_timeout_ms=int(os.environ.get("AGENT_PER_TOOL_CALL_TIMEOUT_MS", 20000)),
             per_llm_timeout_ms=int(os.environ.get("AGENT_PER_LLM_REQ_TIMEOUT_MS", 20000))
+        )
+
+
+class MemoryConfig(BaseModel):
+    """记忆系统配置"""
+    enable_memory: bool = True  # 是否启用记忆
+    default_top_k: int = 5  # 检索默认返回条数
+    forget_on_run_end: bool = True  # 每轮结束是否执行遗忘清理
+    rrf_k: int = 60  # RRF 融合平滑参数
+    memory_store_provider: str = "hybrid"  # 长期存储后端: hybrid|qdrant
+
+    session_max_items: int = 200  # 短期容量
+    session_ttl_seconds: int = 3600  # 短期 TTL 秒
+
+    hybrid_db_path: str = "data/memory/hybrid.db"  # hybrid 路径
+    hybrid_min_score: float = 0.3  # hybrid 衰减删除阈值
+    hybrid_decay_lambda: float = 0.05  # hybrid 时间衰减系数
+    hybrid_top_k: int = 8  # hybrid 内部 top_k
+
+    remote_embedding_model: str = ""  # 远程嵌入模型
+    remote_embedding_base_url: str = ""  # 远程嵌入服务地址
+    remote_embedding_api_key: str = ""  # 远程嵌入 API Key
+    remote_embedding_dim: int = 1024  # 远程嵌入维度
+
+    qdrant_url: str = ""  # Qdrant 服务地址
+    qdrant_api_key: str = ""  # Qdrant API Key
+    qdrant_collection: str = "agent_memory"  # Qdrant 集合名
+    qdrant_prefer_grpc: bool = False  # Qdrant 是否使用 gRPC
+
+    refiner_enabled: bool = True  # 是否启用精炼
+    refiner_batch_size: int = 20  # 精炼批大小（预留）
+    refiner_timeout: float = 5.0  # 精炼线程等待超时（秒，<=0表示不等待）
+
+    @classmethod
+    def from_env(cls) -> "MemoryConfig":
+        return cls(
+            enable_memory=os.environ.get("MEMORY_ENABLE", "true").lower() == "true",
+            default_top_k=int(os.environ.get("MEMORY_DEFAULT_TOP_K", 5)),
+            forget_on_run_end=os.environ.get("MEMORY_FORGET_ON_RUN_END", "true").lower() == "true",
+            rrf_k=int(os.environ.get("MEMORY_RRF_K", 60)),
+            session_max_items=int(os.environ.get("MEMORY_SESSION_MAX_ITEMS", 200)),
+            session_ttl_seconds=int(os.environ.get("MEMORY_SESSION_TTL_SECONDS", 3600)),
+            hybrid_db_path=os.environ.get("MEMORY_HYBRID_DB_PATH", "data/memory/hybrid.db"),
+            hybrid_min_score=float(os.environ.get("MEMORY_HYBRID_MIN_SCORE", 0.3)),
+            hybrid_decay_lambda=float(os.environ.get("MEMORY_HYBRID_DECAY_LAMBDA", 0.05)),
+            hybrid_top_k=int(os.environ.get("MEMORY_HYBRID_TOP_K", 8)),
+            memory_store_provider=os.environ.get("MEMORY_STORE_PROVIDER", "hybrid"),
+            remote_embedding_model=os.environ.get("MEMORY_REMOTE_EMBEDDING_MODEL", ""),
+            remote_embedding_base_url=os.environ.get("MEMORY_REMOTE_EMBEDDING_BASE_URL", ""),
+            remote_embedding_api_key=os.environ.get("MEMORY_REMOTE_EMBEDDING_API_KEY", ""),
+            remote_embedding_dim=int(os.environ.get("MEMORY_REMOTE_EMBEDDING_DIM", 1024)),
+            qdrant_url=os.environ.get("MEMORY_QDRANT_URL", ""),
+            qdrant_api_key=os.environ.get("MEMORY_QDRANT_API_KEY", ""),
+            qdrant_collection=os.environ.get("MEMORY_QDRANT_COLLECTION", "agent_memory"),
+            qdrant_prefer_grpc=os.environ.get("MEMORY_QDRANT_PREFER_GRPC", "false").lower() == "true",
+            refiner_enabled=os.environ.get("MEMORY_REFINER_ENABLED", "true").lower() == "true",
+            refiner_batch_size=int(os.environ.get("MEMORY_REFINER_BATCH_SIZE", 20)),
+            refiner_timeout=float(os.environ.get("MEMORY_REFINER_TIMEOUT", 2.0)),
         )
     
 
