@@ -3,7 +3,7 @@ Description: 配置中心
 Author: zyq
 Date: 2025-12-25 16:24:10
 LastEditors: zyq
-LastEditTime: 2026-01-04 17:20:38
+LastEditTime: 2026-01-06 17:53:06
 '''
 import os
 import json
@@ -187,7 +187,71 @@ class MemoryConfig(BaseModel):
             refiner_batch_size=int(os.environ.get("MEMORY_REFINER_BATCH_SIZE", 20)),
             refiner_timeout=float(os.environ.get("MEMORY_REFINER_TIMEOUT", 2.0)),
         )
-    
+
+
+class RAGConfig(BaseModel):
+    """RAG 系统配置"""
+
+    collection: str = ""  # 业务优先，空则按前缀+biz_id 生成
+    collection_prefix: str = "rag_"
+    top_k: int = 5
+    fetch_k: int = 20
+    enable_mqe: bool = True
+    enable_hyde: bool = False
+    enable_rerank: bool = False
+    rerank_type: str = "default"  # llm|default
+    metadata_mode: str = "llm"  # llm|rule
+
+    chunk_size: int = 800
+    chunk_overlap: int = 200
+    chunker_type: str = "recursive"
+
+    embedding_model: str = ""
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_dim: int = 1024
+
+    rerank_model: str | None = None
+    rerank_base_url: str | None = None
+    rerank_api_key: str | None = None
+
+    qdrant_url: str = ""
+    qdrant_api_key: str = ""
+    qdrant_min_score: float = 0.3
+
+    trace_enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> "RAGConfig":
+        return cls(
+            collection=os.environ.get("RAG_COLLECTION", "") or "",
+            top_k=int(os.environ.get("RAG_TOP_K", 5)),
+            fetch_k=int(os.environ.get("RAG_FETCH_K", 20)),
+            enable_mqe=os.environ.get("RAG_ENABLE_MQE", "true").lower() == "true",
+            enable_hyde=os.environ.get("RAG_ENABLE_HYDE", "false").lower() == "true",
+            enable_rerank=os.environ.get("RAG_ENABLE_RERANK", "false").lower() == "true",
+            rerank_type=os.environ.get("RAG_RERANK_TYPE", "llm"),
+            metadata_mode=os.environ.get("RAG_METADATA_MODE", "llm"),
+            chunk_size=int(os.environ.get("RAG_CHUNK_SIZE", 800)),
+            chunk_overlap=int(os.environ.get("RAG_CHUNK_OVERLAP", 200)),
+            chunker_type=os.environ.get("RAG_CHUNKER_TYPE", "recursive"),
+            embedding_model=os.environ.get("RAG_EMBEDDING_MODEL", ""),
+            embedding_base_url=os.environ.get("RAG_EMBEDDING_BASE_URL", ""),
+            embedding_api_key=os.environ.get("RAG_EMBEDDING_API_KEY", ""),
+            embedding_dim=int(os.environ.get("RAG_EMBEDDING_DIM", 1024)),
+            rerank_model=os.environ.get("RAG_RERANK_MODEL"),
+            rerank_base_url=os.environ.get("RAG_RERANK_BASE_URL"),
+            rerank_api_key=os.environ.get("RAG_RERANK_API_KEY"),
+            qdrant_url=os.environ.get("RAG_QDRANT_URL", ""),
+            qdrant_api_key=os.environ.get("RAG_QDRANT_API_KEY", ""),
+            qdrant_min_score=float(os.environ.get("RAG_QDRANT_MIN_SCORE", 0.3)),
+            trace_enabled=os.environ.get("RAG_TRACE_ENABLED", "true").lower() == "true",
+        )
+
+    def collection_name(self, biz_name: str | None = None) -> str:
+        biz = biz_name or "default"
+        return f"rag_{biz}"
+
 
 if __name__ == "__main__":
     llm_cfg = LLMConfig.from_env()

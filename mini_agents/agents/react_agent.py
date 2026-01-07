@@ -3,11 +3,10 @@ Description: ReAct Agent
 Author: zyq
 Date: 2025-12-29 10:35:26
 LastEditors: zyq
-LastEditTime: 2026-01-04 14:51:35
+LastEditTime: 2026-01-07 11:27:37
 '''
-import re
 import asyncio
-from typing import Optional, List,Tuple, Any, Dict, Literal
+from typing import Optional, List, Any, Dict, Literal
 from pocketflow import AsyncFlow, AsyncNode, Flow, Node
 from pydantic import BaseModel
 from loguru import logger
@@ -20,7 +19,7 @@ from ..tools.base import ToolExecutor
 from ..core.exceptions import BaseAgentsException
 from ..memory import MemoryQuery, MemoryRecord
 
-# 默认ReAct提示词模板
+#默认ReAct提示词模板
 DEFAULT_REACT_PROMPT = """你是一个具备推理和行动能力的AI助手。你可以通过思考分析问题, 然后调用合适的工具来获取信息, 最终给出准确的答案。
 
 ## 可用工具列表
@@ -28,6 +27,10 @@ DEFAULT_REACT_PROMPT = """你是一个具备推理和行动能力的AI助手。�
 
 ## 相关记忆
 {memory}
+
+## 相关知识库
+{rag}
+若需要业务知识库支撑，请调用合适的检索工具（如 rag_query_*），检索结果会以 [RAG_START...RAG_END] 形式注入。
 
 ## 工作流程
 根据上下文决定下一步要调用的工具及参数, 或者返回FINISH结束。在调用工具时, 务必严格遵守工具的入参schema定义, 字段名称必须完全一致, 不要使用入参schema中未声明的字段名。
@@ -45,6 +48,7 @@ answer: 仅当action=FINISH时有效, 表示预期输出的最终回答.
 3. 只有当你确信有足够信息回答问题时,才使用FINISH
 4. 如果工具返回的信息不够，继续使用其他工具或相同工具的不同参数
 5. 你需要在有限的轮次内回答问题
+6. 当返回FINISH时，answer必须用中文完整回答当前Question，禁止输出“ok/好的”等敷衍表述，应结合已知信息片段给出关键要点
 
 ## 当前任务
 **Question:** {question}
@@ -56,6 +60,56 @@ answer: 仅当action=FINISH时有效, 表示预期输出的最终回答.
 {history}
 
 现在开始你的推理和行动："""
+
+# DEFAULT_REACT_PROMPT = """你是一个具备严谨推理和工具调用能力的AI助手。你的目标是准确、完整地回答用户问题。
+
+# ## 可用工具列表
+# {tools}
+
+# ## 相关记忆
+# {memory}
+
+# ## 相关知识库
+# {rag}
+# 如果问题涉及业务知识、内部文档或专有信息，请优先调用合适的RAG检索工具（如 rag_query_*）。检索结果将以 [RAG_START]...[RAG_END] 形式注入到后续对话中。
+
+# ## 工作流程与输出要求
+# 你必须严格按照以下JSON格式输出，且每次只能执行一个动作：
+# {{
+#   "action": "CALL" | "FINISH",
+#   "tool_name": string,          // 仅在 action="CALL" 时填写工具名称
+#   "args": {{...}},              // 仅在 action="CALL" 时填写，对象类型
+#   "reason": string,             // 必须清晰说明本次动作的理由，便于追溯
+#   "answer": string              // 仅在 action="FINISH" 时填写，最终对用户的完整中文回答
+# }}
+
+# ### 动作说明
+# - CALL: 调用工具获取更多信息。请选择最合适的单个工具。
+# - FINISH: 任务结束。只有当你已收集到足够、可靠的信息，能够直接给出准确完整的回答时，才使用FINISH。
+
+# ### 严格约束（必须遵守）
+# 1. 输出必须是合法的JSON对象，不能包含任何多余文字、Markdown代码块、换行注释或解释。
+# 2. 字段名必须完全与上述定义一致（action, tool_name, args, reason, answer），大小写敏感。
+# 3. tool_name 和 args 仅在 action="CALL" 时出现，且 args 中的字段名、类型、必填/选填必须严格匹配工具定义的schema，禁止添加未声明字段。
+# 4. reason 必须用中文简洁描述本次动作的理由（50字以内为宜）。
+# 5. 当 action="FINISH" 时：
+#    - answer 必须是用自然、完整的中文直接回答当前Question。
+#    - 禁止敷衍回复（如“好的”“完成”“OK”）。
+#    - 必须整合所有相关信息和检索结果，给出关键要点和结论。
+#    - 禁止在answer中出现JSON、工具调用痕迹或“根据工具返回...”等元信息。
+# 6. 如果当前工具返回信息不足，可继续调用工具（同一工具不同参数或其他工具）。
+# 7. 请在有限轮次内完成任务。
+
+# ## 当前任务
+# **Question:** {question}
+
+# ## 剩余步数
+# {rounds}
+
+# ## 执行历史
+# {history}
+
+# 现在开始推理，并直接输出JSON："""
 
 DecideNodeActionStat = Literal["init", "act", "abort"]
 ExecuteNodeActionStat = Literal["init", "act", "abort"]
@@ -85,6 +139,7 @@ class ReActSharedState(BaseModel):
     left_steps: int # 剩余可用步数
     tools_desc: str # 可用工具描述
     memory_context: str # 记忆上下文片段
+    rag_context: str # RAG 上下文片段
     final_answer: str # 最终回答
     tool_call: List[ToolCallInfo] # 工具调用信息
     # run_record: List[RunStateRecord] # 运行记录
@@ -119,10 +174,13 @@ class DecideNode(Node):
         self._prompt = DEFAULT_REACT_PROMPT.format(
             tools=shared.tools_desc,
             memory=shared.memory_context,
+            rag=shared.rag_context,
             question=shared.query,
             rounds=shared.left_steps,
             history=history_msg_desc
         )
+
+        logger.info("prompt:\n" + self._prompt)
         return DecideNodePrepModel(prep_action="act")
     
     def exec(self, prep_model: DecideNodePrepModel) -> DecideNodeExecModel:
@@ -206,9 +264,20 @@ class ExecuteNode(Node):
         # 获取tool执行结果
         tool_exec_res = exec_model.exec_res.get("tool_call_result", None)
         shared.tool_call[-1].tool_exec_res = tool_exec_res 
-        shared.history.append(Message(role="tool", content=f"Observation: {tool_exec_res}"))
+        rag_ctx = self._extract_rag_context(tool_exec_res)
+        if rag_ctx:
+            shared.rag_context = rag_ctx
+            shared.history.append(Message(role="tool", content=f"Observation: RAG上下文已更新\n{rag_ctx}"))
+        else:
+            shared.history.append(Message(role="tool", content=f"Observation: {tool_exec_res}"))
         return "decide"      
 
+    @staticmethod
+    def _extract_rag_context(tool_exec_res: Any) -> str:
+        """从工具返回值中提取 rag_context"""
+        if isinstance(tool_exec_res, dict) and tool_exec_res.get("rag_context"):
+            return tool_exec_res.get("rag_context", "")
+        return ""
 # 异步节点版本
 class AsyncDecideNode(AsyncNode):
     def __init__(self, llm_client: BaseLLMClient):
@@ -236,6 +305,7 @@ class AsyncDecideNode(AsyncNode):
         self._prompt = DEFAULT_REACT_PROMPT.format(
             tools=shared.tools_desc,
             memory=shared.memory_context,
+            rag=shared.rag_context,
             question=shared.query,
             rounds=shared.left_steps,
             history=history_msg_desc
@@ -310,7 +380,12 @@ class AsyncExecuteNode(AsyncNode):
 
         tool_exec_res = exec_model.exec_res.get("tool_call_result", None)
         shared.tool_call[-1].tool_exec_res = tool_exec_res
-        shared.history.append(Message(role="tool", content=f"Observation: {tool_exec_res}"))
+        rag_ctx = ExecuteNode._extract_rag_context(tool_exec_res)
+        if rag_ctx:
+            shared.rag_context = rag_ctx
+            shared.history.append(Message(role="tool", content=f"Observation: RAG 上下文已更新\n{rag_ctx}"))
+        else:
+            shared.history.append(Message(role="tool", content=f"Observation: {tool_exec_res}"))
         return "decide"
 class EndNode(Node):
     def post(self, shared, prep_res, exec_res) -> str:
@@ -361,7 +436,7 @@ class ReActAgent(BaseAgent):
                 self._memory_manager.add(user_rec)
             except Exception as e:
                 logger.warning(f"写入记忆失败: {e}")
-        
+        rag_context = ""
         # tool调用
         tools_desc = ""
         if self._enabled_tool_calling:
@@ -376,6 +451,7 @@ class ReActAgent(BaseAgent):
             left_steps=total_step,
             tools_desc=tools_desc,
             memory_context=memory_context,
+            rag_context=rag_context,
             final_answer="",
             tool_call=[]
         )
@@ -432,6 +508,7 @@ class ReActAgent(BaseAgent):
                 self._memory_manager.add(user_rec)
             except Exception as e:
                 logger.warning(f"写入记忆失败: {e}")
+        rag_context = ""
         tools_desc = ""
         if self._enabled_tool_calling:
             tools_desc = "\n".join(
@@ -445,6 +522,7 @@ class ReActAgent(BaseAgent):
             left_steps=total_step,
             tools_desc=tools_desc,
             memory_context=memory_context,
+            rag_context=rag_context,
             final_answer="",
             tool_call=[]
         )
