@@ -14,6 +14,7 @@ mini_agents:
 * test：包含多个不同的调用示例
 * agents: 包含多个具体的agent实现，主要通过pocketflow来做同步/异步版本的实现。pocketflow可视为一个工作流编排器，源码仅有100行，可作为workflow/agent设计的最小载体。在它的基础上做能力扩展。pocketflow见：https://github.com/The-Pocket/PocketFlow
 * memory: 包含短期/长期记忆功能的实现, 可配置在agent中, 目前已在react agent中适配记忆能力
+* rag: 实现基础rag pipeline, 支持以独立组件的方式提供数据处理+向量检索服务, 也可通过工具注册的方式, 注入到agent中. 参考`test_rag_pipeline.py`和`test_react_rag_tool.py`实现
 
 
 ## 依赖安装
@@ -21,6 +22,9 @@ mini_agents:
 ```bash
 uv pip install -r requirements.txt
 ```
+如需使用rag和memory组件, 需要额外安装以下依赖组件:
+* qdrant: 向量存储使用, 建议以docker方式部署
+* xinference: 部署embedding模型、rerank模型
 
 ## 配置
 在项目根目录准备 `.env`，常用变量如下：
