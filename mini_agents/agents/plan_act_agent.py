@@ -18,6 +18,7 @@ from ..core.config import AgentConfig
 from ..core.message import Message
 from ..tools.base import ToolExecutor
 from ..core.exceptions import BaseAgentsException, ToolException
+from ..common import build_tool_lines
 
 
 DEFAULT_PLAN_PROMPT = """你是一个善于规划并执行的智能体，请先生成可执行的步骤计划，然后再逐步行动。
@@ -74,7 +75,12 @@ class PlanNode(Node):
 
     def _safe_load_plan(self, text: str) -> Optional[List[str]]:
         try:
-            data = json.loads(text)
+            cleaned = text.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("`").strip()
+                if cleaned.lower().startswith("json"):
+                    cleaned = cleaned[4:].strip()
+            data = json.loads(cleaned)
             plan = data.get("plan", [])
             if isinstance(plan, list):
                 return [str(p) for p in plan if str(p).strip()]
@@ -123,9 +129,14 @@ class ActNode(Node):
 
     def _safe_json(self, text: str) -> Optional[Dict[str, Any]]:
         try:
-            if "<think>" in text:
-                text = text.split("</think>")[-1].strip()
-            return json.loads(text)
+            cleaned = text.strip()
+            if "<think>" in cleaned:
+                cleaned = cleaned.split("</think>")[-1].strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("`").strip()
+                if cleaned.lower().startswith("json"):
+                    cleaned = cleaned[4:].strip()
+            return json.loads(cleaned)
         except Exception:
             return None
 
@@ -221,10 +232,7 @@ class PlanActAgent(BaseAgent):
         if not self._enabled_tool_calling:
             return ""
         tool_list = self.tool_executor.get_tool_desc()
-        return "\n".join(
-            f"- {tool_info.get('name', '')}: {tool_info.get('description', '')} | parameters={tool_info.get('parameters', '')}"
-            for tool_info in tool_list
-        )
+        return build_tool_lines(tool_list, bullet="- ")
 
     def run(self, user_message: Message, **kwargs) -> Message:
         plan_node = PlanNode(self._llm_client)

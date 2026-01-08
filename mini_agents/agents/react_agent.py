@@ -17,7 +17,17 @@ from ..core.config import AgentConfig
 from ..core.message import Message
 from ..tools.base import ToolExecutor
 from ..core.exceptions import BaseAgentsException
-from ..memory import MemoryQuery, MemoryRecord
+from ..common import (
+    build_tool_lines,
+    inject_memory_context,
+    add_session_message,
+    save_history_messages,
+    collect_records,
+    run_memory_refiner_with_timeout,
+    run_memory_refiner_with_timeout_async,
+    forget_if_needed,
+    build_tool_observation,
+)
 
 #默认ReAct提示词模板
 DEFAULT_REACT_PROMPT = """你是一个具备推理和行动能力的AI助手。你可以通过思考分析问题, 然后调用合适的工具来获取信息, 最终给出准确的答案。
@@ -264,20 +274,11 @@ class ExecuteNode(Node):
         # 获取tool执行结果
         tool_exec_res = exec_model.exec_res.get("tool_call_result", None)
         shared.tool_call[-1].tool_exec_res = tool_exec_res 
-        rag_ctx = self._extract_rag_context(tool_exec_res)
+        rag_ctx, obs_msg = build_tool_observation(tool_exec_res)
         if rag_ctx:
             shared.rag_context = rag_ctx
-            shared.history.append(Message(role="tool", content=f"Observation: RAG上下文已更新\n{rag_ctx}"))
-        else:
-            shared.history.append(Message(role="tool", content=f"Observation: {tool_exec_res}"))
+        shared.history.append(obs_msg)
         return "decide"      
-
-    @staticmethod
-    def _extract_rag_context(tool_exec_res: Any) -> str:
-        """从工具返回值中提取 rag_context"""
-        if isinstance(tool_exec_res, dict) and tool_exec_res.get("rag_context"):
-            return tool_exec_res.get("rag_context", "")
-        return ""
 # 异步节点版本
 class AsyncDecideNode(AsyncNode):
     def __init__(self, llm_client: BaseLLMClient):
@@ -380,12 +381,10 @@ class AsyncExecuteNode(AsyncNode):
 
         tool_exec_res = exec_model.exec_res.get("tool_call_result", None)
         shared.tool_call[-1].tool_exec_res = tool_exec_res
-        rag_ctx = ExecuteNode._extract_rag_context(tool_exec_res)
+        rag_ctx, obs_msg = build_tool_observation(tool_exec_res)
         if rag_ctx:
             shared.rag_context = rag_ctx
-            shared.history.append(Message(role="tool", content=f"Observation: RAG 上下文已更新\n{rag_ctx}"))
-        else:
-            shared.history.append(Message(role="tool", content=f"Observation: {tool_exec_res}"))
+        shared.history.append(obs_msg)
         return "decide"
 class EndNode(Node):
     def post(self, shared, prep_res, exec_res) -> str:
@@ -425,25 +424,19 @@ class ReActAgent(BaseAgent):
         memory_context = ""
         user_id = user_message.metadata.get("user_id") if user_message.metadata else None
         if self._memory_enabled:
-            try:
-                mq = MemoryQuery(text=user_message.content, user_id=user_id, top_k=self._memory_config.default_top_k)
-                memory_context = self._memory_manager.inject_context(mq) # 检索记忆片段, 构造记忆片段的上下文信息
-            except Exception as e:
-                logger.warning(f"记忆检索失败: {e}")
-                memory_context = ""
-            try:
-                user_rec = MemoryRecord(type="session", content=user_message.content, metadata={"role": "user", "user_id": user_id}, tags=user_message.metadata.get("tags", []) if user_message.metadata else [])
-                self._memory_manager.add(user_rec)
-            except Exception as e:
-                logger.warning(f"写入记忆失败: {e}")
+            memory_context = inject_memory_context(self._memory_manager, self._memory_config, user_message)
+            add_session_message(
+                self._memory_manager,
+                user_message.content,
+                "user",
+                user_id,
+                tags=user_message.metadata.get("tags", []) if user_message.metadata else [],
+            )
         rag_context = ""
         # tool调用
         tools_desc = ""
         if self._enabled_tool_calling:
-            tools_desc = "\n".join(
-                f"-{tool_info.get('name', '')}: {tool_info.get('description', '')} |paramters={tool_info.get('parameters', '')}"
-                for tool_info in self.tool_executor.get_tool_desc()
-            )
+            tools_desc = build_tool_lines(self.tool_executor.get_tool_desc(), bullet="-")
         
         shared = ReActSharedState(
             query=user_message.content,
@@ -465,16 +458,11 @@ class ReActAgent(BaseAgent):
         # 写入记忆与清理
         if self._memory_enabled:
             try:
-                assistant_rec = MemoryRecord(type="session", content=final_answer, metadata={"role": "assistant", "user_id": user_id})
-                self._memory_manager.add(assistant_rec)
-                # 同步写入当前轮对话过程
-                self._save_history_to_memory(shared, user_id)
-                if self._memory_config.forget_on_run_end:
-                    self._memory_manager.forget_all()
-                if self._memory_config.refiner_enabled:
-                    session_records = self._collect_session_records(shared, user_message, final_answer, user_id)
-                    th = self._memory_manager.refine_async(session_records, target_type="long_term", user_id=user_id, llm_client=self._llm_client)
-                    self._wait_refiner_thread(th, user_id)
+                add_session_message(self._memory_manager, final_answer, "assistant", user_id, score=0.9, importance=0.9)
+                save_history_messages(self._memory_manager, shared.history, user_id)
+                forget_if_needed(self._memory_manager, self._memory_config)
+                session_records = collect_records(user_message, shared.history, final_answer, user_id)
+                run_memory_refiner_with_timeout(self._memory_manager, self._memory_config, session_records, user_id, self._llm_client)
             except Exception as e:
                 logger.warning(f"记忆写入或清理失败: {e}")
         
@@ -497,24 +485,18 @@ class ReActAgent(BaseAgent):
         memory_context = ""
         user_id = user_message.metadata.get("user_id") if user_message.metadata else None
         if self._memory_enabled:
-            try:
-                mq = MemoryQuery(text=user_message.content, user_id=user_id, top_k=self._memory_config.default_top_k)
-                memory_context = self._memory_manager.inject_context(mq)
-            except Exception as e:
-                logger.warning(f"记忆检索失败: {e}")
-                memory_context = ""
-            try:
-                user_rec = MemoryRecord(type="session", content=user_message.content, metadata={"role": "user", "user_id": user_id}, tags=user_message.metadata.get("tags", []) if user_message.metadata else [])
-                self._memory_manager.add(user_rec)
-            except Exception as e:
-                logger.warning(f"写入记忆失败: {e}")
+            memory_context = inject_memory_context(self._memory_manager, self._memory_config, user_message)
+            add_session_message(
+                self._memory_manager,
+                user_message.content,
+                "user",
+                user_id,
+                tags=user_message.metadata.get("tags", []) if user_message.metadata else [],
+            )
         rag_context = ""
         tools_desc = ""
         if self._enabled_tool_calling:
-            tools_desc = "\n".join(
-                f"-{tool_info.get('name', '')}: {tool_info.get('description', '')} |paramters={tool_info.get('parameters', '')}"
-                for tool_info in self.tool_executor.get_tool_desc()
-            )
+            tools_desc = build_tool_lines(self.tool_executor.get_tool_desc(), bullet="-")
 
         shared = ReActSharedState(
             query=user_message.content,
@@ -534,16 +516,12 @@ class ReActAgent(BaseAgent):
         self.add_history(assistant_msg)
         if self._memory_enabled:
             try:
-                assistant_rec = MemoryRecord(type="session", content=final_answer, metadata={"role": "assistant", "user_id": user_id})
-                self._memory_manager.add(assistant_rec)
-                self._save_history_to_memory(shared, user_id)
-                if self._memory_config.forget_on_run_end:
-                    self._memory_manager.forget_all()
-                if self._memory_config.refiner_enabled:
-                    session_records = self._collect_session_records(shared, user_message, final_answer, user_id)
-                    logger.info(f"启动精炼: records={len(session_records)}, user_id={user_id}")
-                    th = self._memory_manager.refine_async(session_records, target_type="long_term", user_id=user_id, llm_client=self._llm_client)
-                    await self._wait_refiner_thread_async(th, user_id)
+                add_session_message(self._memory_manager, final_answer, "assistant", user_id, score=0.9, importance=0.9)
+                save_history_messages(self._memory_manager, shared.history, user_id)
+                forget_if_needed(self._memory_manager, self._memory_config)
+                session_records = collect_records(user_message, shared.history, final_answer, user_id)
+                logger.info(f"启动精炼: records={len(session_records)}, user_id={user_id}")
+                await run_memory_refiner_with_timeout_async(self._memory_manager, self._memory_config, session_records, user_id, self._llm_client)
             except Exception as e:
                 logger.warning(f"记忆写入或清理失败: {e}")
         
@@ -553,73 +531,3 @@ class ReActAgent(BaseAgent):
     
     def get_run_history(self) -> List[Message]:
         return self._shared.history
-
-    def _collect_session_records(self, shared: ReActSharedState, user_msg: Message, final_answer: str, user_id: Optional[str]) -> List[MemoryRecord]:
-        """汇总本轮对话记录（含用户输入、工具观察、最终答案）供精炼"""
-        session_records: List[MemoryRecord] = []
-        session_records.append(
-            MemoryRecord(
-                type="session",
-                content=user_msg.content,
-                metadata={"role": "user", "user_id": user_id},
-                score=0.8,
-                importance=0.8,
-            )
-        )
-        for msg in shared.history:
-            session_records.append(
-                MemoryRecord(
-                    type="session",
-                    content=msg.content,
-                    metadata={"role": msg.role, "user_id": user_id},
-                    score=0.7,
-                    importance=0.6,
-                )
-            )
-        session_records.append(
-            MemoryRecord(
-                type="session",
-                content=final_answer,
-                metadata={"role": "assistant", "user_id": user_id},
-                score=0.9,
-                importance=0.9,
-            )
-        )
-        return session_records
-
-    def _save_history_to_memory(self, shared: ReActSharedState, user_id: Optional[str]) -> None:
-        """将当前轮的历史（工具观察等）同步写入短期记忆"""
-        for msg in shared.history:
-            try:
-                rec = MemoryRecord(
-                    type="session",
-                    content=msg.content,
-                    metadata={"role": msg.role, "user_id": user_id},
-                    score=0.7,
-                    importance=0.6,
-                )
-                self._memory_manager.add(rec)
-            except Exception as e:
-                logger.warning(f"写入历史记忆失败: {e}")
-
-    def _wait_refiner_thread(self, thread, user_id: Optional[str]):
-        """等待精炼线程，超时则记录告警"""
-        if not thread:
-            return
-        timeout = getattr(self._memory_config, "refiner_timeout", 0) or 0
-        if timeout <= 0:
-            return
-        thread.join(timeout)
-        if thread.is_alive():
-            logger.warning(f"refiner 在超时内未完成，user_id={user_id}, timeout={timeout}s")
-
-    async def _wait_refiner_thread_async(self, thread, user_id: Optional[str]):
-        """异步等待精炼线程"""
-        if not thread:
-            return
-        timeout = getattr(self._memory_config, "refiner_timeout", 0) or 0
-        if timeout <= 0:
-            return
-        await asyncio.to_thread(thread.join, timeout)
-        if thread.is_alive():
-            logger.warning(f"refiner 在超时内未完成，user_id={user_id}, timeout={timeout}s")

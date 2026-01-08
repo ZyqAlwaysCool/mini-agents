@@ -3,7 +3,7 @@ Description:
 Author: zyq
 Date: 2025-12-26 16:41:27
 LastEditors: zyq
-LastEditTime: 2025-12-29 11:16:45
+LastEditTime: 2026-01-08 10:38:26
 '''
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -40,8 +40,7 @@ def test_simple_agent():
     print(answer)
 
 def test_simple_agent_with_tools():
-    llm_cfg = LLMConfig.from_env()
-    llm_client = BaseLLMClient(model=llm_cfg.default_model, provider=llm_cfg.default_provider, api_key=llm_cfg.default_apikey, base_url=llm_cfg.default_base_url)
+    llm_client = BaseLLMClient()
     agent = SimpleAgent("test_agent_2", llm_client, agent_config=AgentConfig, tool_executor=ToolExecutor)
     test_msg = Message(content="今天桂林的天气情况如何?", role="user")
     answer = agent.run(test_msg, stream=False)

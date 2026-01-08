@@ -9,21 +9,19 @@ from mini_agents.memory import (
     HybridLongTermMemoryStore,
     create_memory_manager,
 )
-from mini_agents.memory.embedder.base import BaseEmbedder
-
-
-class DummyEmbedder(BaseEmbedder):
-    """测试用固定向量嵌入器"""
-
-    def __init__(self, dim: int = 4):
-        self.dim = dim
-
-    def embed(self, texts):
-        return [[1.0] * self.dim for _ in texts]
+from mini_agents.memory.embedder.remote import RemoteEmbedder
+from mini_agents.core.config import MemoryConfig
+from mini_agents.core.llm import BaseLLMClient
 
 
 def test_memory_manager_rrf_and_forget(tmp_path: Path):
-    embedder = DummyEmbedder()
+    memory_cfg = MemoryConfig.from_env()
+    embedder = RemoteEmbedder(
+        model=memory_cfg.remote_embedding_model,
+        api_key=memory_cfg.remote_embedding_api_key,
+        base_url=memory_cfg.remote_embedding_base_url, # xinference
+        dim=memory_cfg.remote_embedding_dim,
+    )
     db_path = tmp_path / "hybrid.db"
     session_store = SessionMemoryStore(max_items=10, ttl_seconds=3600)
     hybrid_store = HybridLongTermMemoryStore(db_path=str(db_path), embedder=embedder, decay_lambda=0.0)
@@ -94,13 +92,6 @@ def test_session_search_with_bm25():
     assert hits and hits[0].record.id == rec1.id
 
 
-class DummyLLM:
-    """用于测试的假 LLM，直接返回固定摘要"""
-
-    def invoke(self, messages):
-        return '[{"content":"用户喜欢Python异步编程，涉及 asyncio","tags":["python","asyncio"],"score":0.9,"importance":0.8}]'
-
-
 def test_refiner_promote_to_long_term(tmp_path: Path):
     db_path = tmp_path / "hybrid.db"
     hybrid_store = HybridLongTermMemoryStore(db_path=str(db_path), embedder=None, decay_lambda=0.0)
@@ -114,13 +105,12 @@ def test_refiner_promote_to_long_term(tmp_path: Path):
         MemoryRecord(type="session", content="用户提出需求：用Python做异步服务", metadata={"role": "user", "user_id": "u1"}),
         MemoryRecord(type="session", content="助手建议使用asyncio", metadata={"role": "assistant", "user_id": "u1"}),
     ]
-
-    th = manager.refine_async(records, target_type="long_term", user_id="u1", llm_client=DummyLLM())
+    
+    th = manager.refine_async(records, target_type="long_term", user_id="u1", llm_client=BaseLLMClient())
     if th:
         th.join(timeout=5)
 
     hits = manager.search(MemoryQuery(text="asyncio", user_id="u1", top_k=3, type_scope=["long_term"]))
-    assert hits, "精炼后应写入长期记忆"
     assert "asyncio" in hits[0].record.content
 
 
@@ -147,3 +137,7 @@ def test_create_memory_manager(tmp_path: Path, monkeypatch):
     mgr = create_memory_manager()
     # 至少包含 session 与 long_term/semantic 对应的存储
     assert len(mgr._stores) >= 2
+
+
+if __name__ == "__main__":
+    test_refiner_promote_to_long_term(Path("./"))
