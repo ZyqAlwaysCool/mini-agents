@@ -4,7 +4,7 @@ Manager本身不做业务过滤/打分, 此部分内容由各store完成, 这里
 Author: zyq
 Date: 2025-12-31 10:53:14
 LastEditors: zyq
-LastEditTime: 2026-01-04 10:22:27
+LastEditTime: 2026-01-14 16:13:44
 '''
 from __future__ import annotations
 
@@ -55,15 +55,18 @@ class MemoryManager:
         fused = self._rrf_merge(all_hits, query.top_k or self.default_top_k)
         return fused
 
-    def inject_context(self, query: MemoryQuery, top_k: Optional[int] = None) -> str:
+    def build_memory_context(self, query: MemoryQuery, top_k: Optional[int] = None) -> str:
+        """构造长期记忆上下文结构"""
         query.top_k = top_k or query.top_k or self.default_top_k
         hits = self.search(query)
         if not hits:
             return ""
         lines = ["[MEMORY_START]"]
         for hit in hits:
-            lines.append(f"- {hit.record.content} (来源={hit.source_type}, 分值={hit.score:.2f})")
+            ts = hit.record.created_at.isoformat() if hit.record.created_at else ""
+            lines.append(f"- {hit.record.content} (时间={ts}, 来源={hit.source_type}, 分值={hit.score:.2f})")
         lines.append("[MEMORY_END]")
+        logger.debug(f"生成记忆上下文: {lines}")
         return "\n".join(lines)
 
     def forget_all(self, now: Optional[datetime] = None) -> Dict[str, List[str]]:

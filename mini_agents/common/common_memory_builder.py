@@ -3,7 +3,7 @@ Description: 封装记忆组件调用
 Author: zyq
 Date: 2026-01-07 17:04:09
 LastEditors: zyq
-LastEditTime: 2026-01-08 10:00:00
+LastEditTime: 2026-01-14 16:07:41
 '''
 
 from typing import List, Optional
@@ -16,14 +16,25 @@ from mini_agents.memory import MemoryRecord, MemoryQuery, MemoryManager
 from mini_agents.core.llm import BaseLLMClient
 
 
-def inject_memory_context(memory_manager: MemoryManager, memory_config: MemoryConfig, user_message: Message) -> str:
-    """根据用户消息检索记忆片段并返回上下文字符串"""
+def query_memory_context(
+    memory_manager: MemoryManager,
+    memory_config: MemoryConfig,
+    user_message: Message,
+    type_scope: Optional[List[str]] = None,
+    top_k: Optional[int] = None,
+) -> str:
+    """根据用户消息检索记忆片段并返回上下文字符串，可按类型范围过滤"""
     if not memory_manager or not memory_config or not memory_config.enable_memory:
         return ""
     user_id = user_message.metadata.get("user_id") if user_message.metadata else None
     try:
-        mq = MemoryQuery(text=user_message.content, user_id=user_id, top_k=memory_config.default_top_k)
-        return memory_manager.inject_context(mq)
+        mq = MemoryQuery(
+            text=user_message.content,
+            user_id=user_id,
+            top_k=top_k or memory_config.default_top_k,
+            type_scope=type_scope,
+        )
+        return memory_manager.build_memory_context(mq)
     except Exception as e:
         logger.warning(f"记忆检索失败: {e}")
         return ""

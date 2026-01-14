@@ -10,6 +10,8 @@ from __future__ import annotations
 import threading
 from typing import List, Optional, Set, TYPE_CHECKING
 from loguru import logger
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from .base import MemoryRecord, MemoryType
 
 
@@ -82,14 +84,15 @@ class MemoryRefiner:
             if not distilled_records:
                 logger.info(f"refiner 未产出长期记忆，原因={parse_err}, user_id={user_id}, 原始输出={llm_res}")
                 return
-            # 去重：按 content 去重
+            # 去重：先按 content 精确去重，再按相似度合并
             seen = set()
-            unique_records: List[MemoryRecord] = []
+            tmp_records: List[MemoryRecord] = []
             for rec in distilled_records:
                 if rec.content in seen:
                     continue
                 seen.add(rec.content)
-                unique_records.append(rec)
+                tmp_records.append(rec)
+            unique_records = self._dedup_by_similarity(tmp_records)
 
             memory_manager.batch_add(unique_records)
             logger.info(f"refiner 完成写入，条数={len(unique_records)}")
@@ -138,3 +141,25 @@ class MemoryRefiner:
         if not records:
             return [], "empty_records_after_parse"
         return records, None
+
+    def _dedup_by_similarity(self, records: List[MemoryRecord], threshold: float = 0.8) -> List[MemoryRecord]:
+        """基于 TF-IDF 余弦相似度的语义去重，保留首个代表"""
+        if len(records) <= 1:
+            return records
+        texts = [r.content for r in records]
+        try:
+            vecs = TfidfVectorizer().fit_transform(texts)
+        except Exception as exc:
+            logger.warning(f"相似度去重失败，跳过：{exc}")
+            return records
+        keep_idx: List[int] = []
+        for i in range(len(records)):
+            sim_high = False
+            for kept in keep_idx:
+                sim = cosine_similarity(vecs[i], vecs[kept])[0][0]
+                if sim >= threshold:
+                    sim_high = True
+                    break
+            if not sim_high:
+                keep_idx.append(i)
+        return [records[i] for i in keep_idx]

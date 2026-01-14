@@ -3,7 +3,7 @@ Description: ReAct Agent
 Author: zyq
 Date: 2025-12-29 10:35:26
 LastEditors: zyq
-LastEditTime: 2026-01-07 11:27:37
+LastEditTime: 2026-01-09 16:58:30
 '''
 import asyncio
 from typing import Optional, List, Any, Dict, Literal
@@ -19,7 +19,7 @@ from ..tools.base import ToolExecutor
 from ..core.exceptions import BaseAgentsException
 from ..common import (
     build_tool_lines,
-    inject_memory_context,
+    query_memory_context,
     add_session_message,
     save_history_messages,
     collect_records,
@@ -424,7 +424,7 @@ class ReActAgent(BaseAgent):
         memory_context = ""
         user_id = user_message.metadata.get("user_id") if user_message.metadata else None
         if self._memory_enabled:
-            memory_context = inject_memory_context(self._memory_manager, self._memory_config, user_message)
+            memory_context = query_memory_context(self._memory_manager, self._memory_config, user_message)
             add_session_message(
                 self._memory_manager,
                 user_message.content,
@@ -485,7 +485,7 @@ class ReActAgent(BaseAgent):
         memory_context = ""
         user_id = user_message.metadata.get("user_id") if user_message.metadata else None
         if self._memory_enabled:
-            memory_context = inject_memory_context(self._memory_manager, self._memory_config, user_message)
+            memory_context = query_memory_context(self._memory_manager, self._memory_config, user_message)
             add_session_message(
                 self._memory_manager,
                 user_message.content,

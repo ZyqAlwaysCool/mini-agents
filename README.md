@@ -13,7 +13,7 @@ mini_agents:
 * tools: 定义工具管理基类, 包括本地工具调用和远端mcp工具调用实现, 交由统一的ToolExecutor管理工具注册、调用.
 * test：包含多个不同的调用示例.
 * agents: 包含多个具体的agent实现，主要通过pocketflow来做同步/异步版本的实现. pocketflow可视为一个工作流编排器，源码仅有100行，可作为workflow/agent设计的最小载体. 在它的基础上做能力扩展. pocketflow见：https://github.com/The-Pocket/PocketFlow
-* memory: 包含短期/长期记忆功能的实现, 可配置在agent中, 目前已在react agent中适配记忆能力.
+* memory: 对话式记忆管理组件, 关注短期/长期记忆功能的实现, 短期记忆可由LLM提炼转换成长期记忆, 可配置在agent中, 目前已在react agent中适配记忆能力.
 * rag: 实现基础rag pipeline, 支持以独立组件的方式提供数据处理+向量检索服务, 也可通过工具注册的方式, 注入到agent中. 参考`test_rag_pipeline.py`和`test_react_rag_tool.py`实现. 需提前配置embedding模型、向量存储数据库地址，推荐均以base_url、apikey的方式做远端调用，不在本地直接拉起模型.
 
 

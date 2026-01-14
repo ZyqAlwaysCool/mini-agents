@@ -3,7 +3,7 @@ Description: 异常定义
 Author: zyq
 Date: 2025-12-25 16:23:50
 LastEditors: zyq
-LastEditTime: 2026-01-06 09:39:31
+LastEditTime: 2026-01-09 09:43:43
 '''
 class BaseAgentsException(Exception):
     pass
@@ -24,4 +24,7 @@ class MemoryException(BaseAgentsException):
     pass
 
 class RAGException(BaseAgentsException):
+    pass
+
+class ContextException(BaseAgentsException):
     pass

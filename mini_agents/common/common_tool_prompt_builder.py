@@ -3,10 +3,11 @@ Description: 封装工具prompt调用, 提供统一的工具描述
 Author: zyq
 Date: 2026-01-07 17:03:44
 LastEditors: zyq
-LastEditTime: 2026-01-08 10:05:04
+LastEditTime: 2026-01-14 16:12:26
 '''
 
 from typing import List, Dict, Any
+from loguru import logger
 
 
 def _safe_get(info: Dict[str, Any], key: str, default: str = "") -> str:
@@ -23,7 +24,9 @@ def build_tool_lines(tool_desc_list: List[Dict[str, Any]], bullet: str = "-") ->
         name = _safe_get(info, "name")
         desc = _safe_get(info, "description")
         params = info.get("parameters", "")
-        lines.append(f"{bullet}{name}: {desc} |parameters={params}")
+        lines.append(f"{bullet} {name}: {desc} |parameters={params}")
+    
+    logger.debug(f"tool desc: {lines}")
     return "\n".join(lines)
 
 

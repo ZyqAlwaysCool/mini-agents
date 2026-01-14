@@ -63,14 +63,14 @@
   - 文本：`text_score`（BM25/关键词），同样叠加新鲜度与重要性。
 - 融合（跨 store）：使用 RRF（Reciprocal Rank Fusion）按排名融合，避免不同量纲的分值冲突。默认参数 `k=60`。
 - Prompt 注入：
-  - MemoryManager 提供 `inject_context`，输出结构化片段：
-    ```
-    [MEMORY_START]
-    - 用户偏好: ... (source=session, score=0.82)
-    - 历史事件: ... (source=long_term, score=0.75)
-    [MEMORY_END]
-    ```
-  - 保留 `reason` 便于日志观测。
+- MemoryManager 提供 `build_memory_context`，输出结构化片段：
+  ```
+  [MEMORY_START]
+  - 用户偏好: ... (时间=2026-01-13T10:00:00, source=session, score=0.82)
+  - 历史事件: ... (时间=2026-01-12T09:30:00, source=long_term, score=0.75)
+  [MEMORY_END]
+  ```
+  - 注入时附带写入时间，便于 LLM 判断时序与冲突；保留 `reason` 便于日志观测。
 
 ## 7. 遗忘与衰减
 - 衰减函数示例：`decay_score = score * exp(-lambda * age_days) * (1 + log1p(access_count)) * (0.5 + importance)`。
@@ -86,10 +86,13 @@
   - 打标：抽取 tags、来源、置信度。
   - 类型提升：Session -> Hybrid（long_term/semantic）。
 - 实现：`refiner.run_async(records, embedder, llm_client=None)`，可选使用 LLM 做摘要/标签；若无长期价值信息，LLM 允许返回空数组，框架会记录原因日志但不落库；失败时记录日志不影响主流程。
+- 写库前去重：
+  - 先对内容做精确去重。
+  - 再使用 TF-IDF 余弦相似度去重（阈值默认 0.8），仅保留代表性记录，避免长列表出现大量近似表述（例如“用户是Jay”的多条变体）。
 
 ## 9. Agent 接入
 - BaseAgent 增加可选 `memory_manager`。
-- 运行前：构造 MemoryQuery（含 user_id/type_scope/top_k/filters），调用 `inject_context` 将记忆片段插入系统提示的专属段落。
+- 运行前：构造 MemoryQuery（含 user_id/type_scope/top_k/filters），调用 `build_memory_context` 将记忆片段插入系统提示的专属段落。
 - 运行中：用户消息、模型思考、工具 observation 写入 Session；必要时即时写入 Hybrid（重要事件/知识）。
 - 运行后：调用 `refiner` 执行提升；调用 `forget_all` 做清理；需要时 `clear_session` 释放短期。
 - ReActAgent：在提示构造阶段插入 `[MEMORY_START...END]`，工具 observation 追加为 Session 记忆，run 结束后触发精炼与遗忘。

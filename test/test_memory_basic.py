@@ -63,14 +63,14 @@ def test_memory_manager_rrf_and_forget(tmp_path: Path):
     hybrid_store.add(expired)
 
     query = MemoryQuery(text="python 异步", user_id="u1", top_k=5)
-    ctx = manager.inject_context(query)
+    ctx = manager.build_memory_context(query)
     assert "[MEMORY_START]" in ctx and "[MEMORY_END]" in ctx
     assert "Python" in ctx or "asyncio" in ctx
 
     removed = manager.forget_all()
     assert any(expired.id in ids for ids in removed.values())
 
-    ctx_after = manager.inject_context(query)
+    ctx_after = manager.build_memory_context(query)
     assert "过期信息" not in ctx_after
 
 

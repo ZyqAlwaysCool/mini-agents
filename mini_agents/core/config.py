@@ -3,7 +3,7 @@ Description: 配置中心
 Author: zyq
 Date: 2025-12-25 16:24:10
 LastEditors: zyq
-LastEditTime: 2026-01-06 17:53:06
+LastEditTime: 2026-01-14 15:29:30
 '''
 import os
 import json
@@ -15,6 +15,8 @@ load_dotenv()
 
 LLMProviders = Literal["openai"]
 
+
+# ==============================通用配置==============================
 class GeneralConfig(BaseModel):
     # log
     log_level: str = "INFO"
@@ -31,8 +33,10 @@ class GeneralConfig(BaseModel):
     
     def to_dict(self):
         return self.model_dump()
+# ==============================通用配置==============================
 
 
+# ==============================MCP配置==============================
 class MCPServerConfig(BaseModel):
     """MCP 服务端配置"""
     name: str
@@ -93,7 +97,9 @@ class MCPConfig(BaseModel):
                     )
                 )
         return cls(servers=servers)
+# ==============================MCP配置==============================
 
+# ==============================LLM配置==============================
 class LLMConfig(BaseModel):
     default_provider: LLMProviders = "openai"
     default_model: str = "qwen3-max"
@@ -115,7 +121,9 @@ class LLMConfig(BaseModel):
     
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump()
+# ==============================LLM配置==============================
 
+# ==============================Agent配置==============================
 class AgentConfig(BaseModel):
     """Agent基础配置"""
     max_round: Optional[int] = 10 # agent执行的最大轮次数
@@ -129,8 +137,33 @@ class AgentConfig(BaseModel):
             per_tool_timeout_ms=int(os.environ.get("AGENT_PER_TOOL_CALL_TIMEOUT_MS", 20000)),
             per_llm_timeout_ms=int(os.environ.get("AGENT_PER_LLM_REQ_TIMEOUT_MS", 20000))
         )
+# ==============================Agent配置==============================
 
+# ==============================联网搜索配置==============================
+class WebSearchConfig(BaseModel):
+    """联网搜索配置"""
+    engine: str = "tavily"
+    api_key: str = ""
+    api_base_url: str = "https://api.tavily.com"
+    top_k: int = 5
+    max_content_len: int = 0
 
+    @classmethod
+    def from_env(cls) -> "WebSearchConfig":
+        return cls(
+            engine=os.environ.get("WEB_SEARCH_ENGINE", "tavily").lower() or "tavily",
+            api_key=os.environ.get("WEB_SEARCH_API_KEY", ""),
+            api_base_url=os.environ.get("WEB_SEARCH_API_BASE_URL", "https://api.tavily.com"),
+            top_k=int(os.environ.get("WEB_SEARCH_TOP_K", 5)),
+            max_content_len=int(os.environ.get("WEB_SEARCH_MAX_CONTENT_LEN", 0))
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+# ==============================联网搜索配置==============================
+
+# ==============================记忆组件配置==============================
 class MemoryConfig(BaseModel):
     """记忆系统配置"""
     enable_memory: bool = True  # 是否启用记忆
@@ -187,8 +220,9 @@ class MemoryConfig(BaseModel):
             refiner_batch_size=int(os.environ.get("MEMORY_REFINER_BATCH_SIZE", 20)),
             refiner_timeout=float(os.environ.get("MEMORY_REFINER_TIMEOUT", 2.0)),
         )
+# ==============================记忆组件配置==============================
 
-
+# ==============================RAG组件配置==============================
 class RAGConfig(BaseModel):
     """RAG 系统配置"""
 
@@ -251,11 +285,91 @@ class RAGConfig(BaseModel):
     def collection_name(self, biz_name: str | None = None) -> str:
         biz = biz_name or "default"
         return f"rag_{biz}"
+# ==============================RAG组件配置==============================
 
 
-if __name__ == "__main__":
-    llm_cfg = LLMConfig.from_env()
-    print(llm_cfg.to_dict())
+# ==============================上下文组件配置==============================
+class ContextGatherConfig(BaseModel):
+    """上下文收集阶段配置"""
+    min_score: float = 0.2  # 最低相关性阈值
+    history_limit: int = 10  # 历史消息保留条数
 
-    general_cfg = GeneralConfig.from_env()
-    print(general_cfg.to_dict())
+    @classmethod
+    def from_env(cls) -> "ContextGatherConfig":
+        return cls(
+            min_score=float(os.environ.get("CTX_GATHER_MIN_SCORE", 0.2)),
+            history_limit=int(os.environ.get("CTX_HISTORY_LIMIT", 10)),
+        )
+
+
+class ContextSelectConfig(BaseModel):
+    """筛选与打分阶段配置"""
+    weight_similarity: float = 0.7  # 相似度权重
+    recency_window_hours: float = 24.0  # 新鲜期时长(小时)：此窗口内记为最新，得分=1
+    recency_fade_hours: float = 72.0  # 衰减期时长(小时)：从新鲜期结束开始线性降到0
+    top_k: int = 20  # 非系统指令最大条数
+    token_limit: int = 10000  # 非系统指令总 token 上限
+
+    @classmethod
+    def from_env(cls) -> "ContextSelectConfig":
+        return cls(
+            weight_similarity=float(os.environ.get("CTX_SELECT_WEIGHT", 0.7)),
+            recency_window_hours=float(os.environ.get("CTX_RECENCY_WINDOW_HOURS", 24.0)),
+            recency_fade_hours=float(os.environ.get("CTX_RECENCY_FADE_HOURS", 72.0)),
+            top_k=int(os.environ.get("CTX_SELECT_TOP_K", 20)),
+            token_limit=int(os.environ.get("CTX_SELECT_TOKEN_LIMIT", 10000)),
+        )
+
+
+class ContextStructConfig(BaseModel):
+    """结构化阶段配置"""
+    history_turns: int = 5  # 控制多少条历史对话片段进入结构化阶段. 例如10条历史, history_turns=5, 则此阶段按时间排序, 只取最近的5条对话记录
+
+    @classmethod
+    def from_env(cls) -> "ContextStructConfig":
+        return cls(history_turns=int(os.environ.get("CTX_STRUCT_HISTORY_TURNS", 5)))
+
+
+class ContextCompressConfig(BaseModel):
+    """压缩阶段配置"""
+    token_limit: int = 10000  # 兜底 token 上限
+    summary_token: int = 1024  # 摘要截断 token 上限
+    partition_priority: List[str] = [
+        # 当token超限时, 按照此列表优先级倒序删子分区内低置信度信息+压缩摘要，system 分区永不删
+        "constraints",
+        "query_related",
+        "recent_history",
+        "long_term",
+    ]
+
+    @classmethod
+    def from_env(cls) -> "ContextCompressConfig":
+        legacy = os.environ.get("CTX_COMPRESS_TOKEN_BUDGET")
+        return cls(
+            token_limit=int(os.environ.get("CTX_COMPRESS_TOKEN_LIMIT", legacy or 10000)),
+            summary_token=int(os.environ.get("CTX_COMPRESS_SUMMARY_TOKEN", 1024)),
+        )
+
+
+class ContextPipelineConfig(BaseModel):
+    """上下文流水线配置"""
+    round_limit: Optional[int] = None  # 基于固定轮次触发上下文压缩阈值，None 表示不启用
+    token_limit: Optional[int] = None  # 基于token上限触发上下文压缩阈值，None 表示不启用
+    gather: ContextGatherConfig = ContextGatherConfig()
+    select: ContextSelectConfig = ContextSelectConfig()
+    struct: ContextStructConfig = ContextStructConfig()
+    compress: ContextCompressConfig = ContextCompressConfig()
+
+    @classmethod
+    def from_env(cls) -> "ContextPipelineConfig":
+        round_limit = os.environ.get("CTX_ROUND_LIMIT_TRIGGER")
+        token_limit = os.environ.get("CTX_TOKEN_LIMIT_TRIGGER")
+        return cls(
+            round_limit=int(round_limit) if round_limit else None,
+            token_limit=int(token_limit) if token_limit else None,
+            gather=ContextGatherConfig.from_env(),
+            select=ContextSelectConfig.from_env(),
+            struct=ContextStructConfig.from_env(),
+            compress=ContextCompressConfig.from_env(),
+        )
+# ==============================上下文组件配置==============================
