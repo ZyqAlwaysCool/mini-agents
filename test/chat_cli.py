@@ -3,7 +3,7 @@ Description: 验证长时程agent
 Author: zyq
 Date: 2026-01-13 17:34:27
 LastEditors: zyq
-LastEditTime: 2026-01-13 17:36:04
+LastEditTime: 2026-01-14 18:11:57
 '''
 
 import argparse
@@ -51,7 +51,7 @@ def main():
 
     agent = build_agent(args.user_id, args.enable_search)
 
-    print("输入内容开始对话，输入 quit 结束（会触发记忆精炼）")
+    print("输入内容开始对话，输入 quit 结束")
     while True:
         try:
             text = input("你：").strip()

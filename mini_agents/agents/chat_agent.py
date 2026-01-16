@@ -3,7 +3,7 @@ Description: 长时程对话agent, 集成联网搜索、记忆与上下文压缩
 Author: zyq
 Date: 2026-01-13 16:38:11
 LastEditors: zyq
-LastEditTime: 2026-01-14 17:48:58
+LastEditTime: 2026-01-14 18:24:11
 '''
 
 from __future__ import annotations
@@ -78,6 +78,33 @@ long_term: 长期记忆知识
 本轮对话已累计执行动作达到 {max_iter} 次 → 强制FINISH，给出当前最佳可能回答或说明受限原因
 
 当前用户问题：{query}
+"""
+
+FALLBACK_PROMPT = """
+你是一个聪明、知识渊博、态度极好、耐心又真诚的AI助手。
+
+你的核心目标是：
+1. 尽可能给用户最有帮助、最清晰、最实用的回答
+2. 让用户感觉「被认真对待」且「很舒服」
+3. 在准确的前提下，尽量用自然、亲切、像真人对话的语气
+
+请遵循以下沟通原则（重要程度由高到低排列）：
+
+• 真实第一：不会就诚实说不知道，不要硬编
+• 先理解，再回答：先搞清楚用户真正想知道什么
+• 结构清晰：复杂答案尽量分段、编号、使用小标题
+• 避免过度谦虚/自贬，也不要过于自大
+• 当用户明显情绪化/发泄时，先共情再解决问题
+• 能用表格、列表、步骤分解时尽量用，方便阅读
+• 专业内容尽量说人话，避免连续大量术语轰炸
+• 超长回答时，先给重点结论，再展开细节
+• 被问到争议/敏感话题时：尽量客观、中立、呈现多方主要观点，不轻易站队
+
+### 用户问题
+{query}
+
+### 对话历史
+{history}
 """
 
 
@@ -250,7 +277,7 @@ class ChatAgent(BaseAgent):
         while True:
             iteration_guard += 1
             if iteration_guard >= max_iteration_guard:
-                final_answer = "达到兜底重试上限，请提供更多信息后再试"
+                final_answer = self._fallback_response(user_message, context_text)
                 break
             extra_context = ""
             if local_history:
@@ -263,11 +290,12 @@ class ChatAgent(BaseAgent):
                 query=user_message.content,
                 max_iter=max_iteration_guard,
             )
-            logger.debug(f"system prompt: {prompt}")
+            #logger.debug(f"system prompt: {prompt}")
             llm_messages = [Message(role="system", content=prompt)]
             raw = self._llm_client.invoke(llm_messages)
             parsed = self._safe_json(raw)
             if not parsed or "action" not in parsed:
+                # 出错保护
                 no_progress += 1
                 local_history.append(
                     Message(
@@ -276,7 +304,8 @@ class ChatAgent(BaseAgent):
                     )
                 )
                 if no_progress >= max_no_progress:
-                    final_answer = "多次解析失败，当前信息不足，请提供更多细节"
+                    err_desc = "多次解析失败，当前信息不足，请提供更多细节"
+                    final_answer = self._fallback_response(user_message, context_text, err_desc)
                     break
                 continue
 
@@ -288,7 +317,8 @@ class ChatAgent(BaseAgent):
                     no_progress += 1
                     local_history.append(Message(role="assistant", content="系统提醒：缺少 tool_name，请补充工具名称"))
                     if no_progress >= max_no_progress:
-                        final_answer = "缺少工具名称，无法继续，请补充更多信息"
+                        err_desc = "缺少工具名称，无法继续，请补充更多信息"
+                        final_answer = self._fallback_response(user_message, context_text, err_desc)
                         break
                     continue
                 args = parsed.get("args", {})
@@ -298,7 +328,8 @@ class ChatAgent(BaseAgent):
                     no_progress += 1
                     local_history.append(Message(role="assistant", content="系统提醒：工具参数必须是字典，请按 schema 返回"))
                     if no_progress >= max_no_progress:
-                        final_answer = "工具参数格式异常，请补充更多信息或换一种描述"
+                        err_desc = "工具参数格式异常，需要用户补充更多信息或换一种描述"
+                        final_answer = self._fallback_response(user_message, context_text, err_desc)
                         break
                     continue
                 try:
@@ -312,7 +343,8 @@ class ChatAgent(BaseAgent):
                 repeat_key = f"{tool_name}:{json.dumps(args, sort_keys=True, ensure_ascii=False)}"
                 repeat_call_guard[repeat_key] = repeat_call_guard.get(repeat_key, 0) + 1
                 if repeat_call_guard[repeat_key] >= 3:
-                    final_answer = "已多次调用同一工具无新增信息，请补充更明确的需求或更换问题"
+                    err_desc = "已多次调用同一工具无新增信息，请补充更明确的需求"
+                    final_answer = self._fallback_response(user_message, context_text, err_desc)
                     break
                 continue
 
@@ -376,6 +408,17 @@ class ChatAgent(BaseAgent):
                 logger.warning(f"退出时记忆处理失败: {exc}")
 
         return assistant_msg
+    
+    def _fallback_response(self, user_message: Message, context_text: str, err_desc: Optional[str] = None) -> str:
+        """兜底回复"""
+        logger.warning("触发兜底回复逻辑")
+        user_query = f"用户问题: {user_message.content}\n"
+        if err_desc:
+            user_query = f"用户问题: {user_message.content}\n\n 对话过程中遇到的异常情况: {err_desc}\n\n"
+        self._llm_client.invoke(
+                            [Message(role="system", content=FALLBACK_PROMPT.format(history=context_text or "无",
+                                                                                   query=user_query))],
+                        )
 
 
 __all__ = ["ChatAgent"]
